@@ -1,1 +1,185 @@
+package com.ffh.application;
 
+import com.ffh.application.data.*;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.Map;
+
+/**
+ * The Database class works as a go-between for the caller who wants to query the db and the record 'DatabaseQuery'
+ * which contains pre-defined query templates.  The caller passes a search string or update command, along with
+ * optional parameters, to a method called on a new instance of Database, which then connects to the db, retrieves
+ * the appropriate query from the record, queries the db, and returns the query result to the caller.
+ */
+@SuppressWarnings("unchecked")
+public class Database<T extends Data> {
+    /* The input format for this method is Map<String, Object>.  The names of the method variables 'tableName',
+        'userInput', and 'exactMatch' are used as the keys in the map.  So, for example, if the user wanted to
+        search the 'users' table for a user whose name contained the String "en", they would call:
+            new Database<User>().search(Map.of("tableName", "users", "searchString", "en"));
+        Notice there is no need to include an entry for "exactMatch" since we do not want to search for an exact
+        match and the default value for exactMatch is false as per the method call to getParams() just below.
+     */
+
+    /**
+     * This method simply creates a connection to the db and executes the update command entered as
+     * an input String object.
+     */
+    public void updateTable(String update) throws SQLException {
+        Connection connection = new DatabaseConnection().getConnection();
+        Statement statement = connection.createStatement();
+        statement.executeUpdate(update);
+    }
+
+    public ObservableList<T> search(Map<String, Object> parameters) {
+        String tableName = getParams(parameters, "tableName", "");
+        String searchString = getParams(parameters, "searchString", "");
+        Boolean exactMatch = getParams(parameters, "exactMatch", false);
+
+        switch (tableName) {
+            case "service" -> {
+                String ssn = searchString;
+                ObservableList<Service> serviceList = FXCollections.observableArrayList();
+                Connection connectDB = new DatabaseConnection().getConnection();
+                try {
+                    String connectQuery =
+                            "SELECT * " +
+                            "FROM service " +
+                            "WHERE service_no IN " +
+                                "(SELECT service_no " +
+                                "FROM service_participant " +
+                                "WHERE ssn='" + ssn + "' AND isClient=1);";
+                    System.out.println(connectQuery);
+                    Statement statement = connectDB.createStatement();
+                    ResultSet queryResult = statement.executeQuery(connectQuery);
+
+                    while (queryResult.next()) {
+                        Service service = new Service(
+                                queryResult.getString("service_no"),
+                                queryResult.getBoolean("open_casket"),
+                                queryResult.getBoolean("remove_jewelry"),
+                                queryResult.getBoolean("remove_glasses"),
+                                queryResult.getDate("service_date"),
+                                queryResult.getTime("service_time"),
+                                queryResult.getString("service_location"),
+                                queryResult.getString("casket_location"),
+                                queryResult.getString("visitation_location"),
+                                queryResult.getString("music_type")
+                        );
+                        serviceList.add(service);
+                    }
+                    return (ObservableList<T>) serviceList;
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            case "person" -> {
+                String[] clientName;
+                ObservableList<Person> clientList = FXCollections.observableArrayList();
+                if (searchString.matches("[A-Z a-z]*")) {
+                    clientName = searchString.split(" ");
+                    Connection connectDB = new DatabaseConnection().getConnection();
+
+                    try {
+                        DatabaseQuery dbq = new DatabaseQuery();
+                        String connectQuery = dbq.getPersonQuery(clientName);
+                        Statement statement = connectDB.createStatement();
+                        ResultSet queryResult = statement.executeQuery(connectQuery);
+
+                        while (queryResult.next()) {
+                            Person person = new Person(
+                                    queryResult.getString("ssn"),
+                                    queryResult.getString("name_first"),
+                                    queryResult.getString("name_last"),
+                                    queryResult.getString("gender"),
+                                    queryResult.getString("address"),
+                                    queryResult.getString("phone")
+                            );
+                            clientList.add(person);
+                        }
+                        return (ObservableList<T>) clientList;
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.exit(1);
+                    }
+                }
+            }
+            case "inventory" -> {
+                String[] itemName;
+                ObservableList<PurchaseItem> inventoryList = FXCollections.observableArrayList();
+                if (searchString.matches("[A-Z a-z]*")) {
+                    itemName = searchString.split(" ");
+                    Connection connectDB = new DatabaseConnection().getConnection();
+
+                    try {
+                        DatabaseQuery dbq = new DatabaseQuery();
+                        String connectQuery = dbq.getInventoryItemLikeQuery(itemName);
+                        Statement statement = connectDB.createStatement();
+                        ResultSet queryResult = statement.executeQuery(connectQuery);
+
+                        while (queryResult.next()) {
+                            PurchaseItem purchaseItem = new PurchaseItem(
+                                    queryResult.getInt("item_no"),
+                                    queryResult.getString("item_name"),
+                                    queryResult.getInt("quantity"),
+                                    queryResult.getDouble("price")
+                            );
+                            inventoryList.add(purchaseItem);
+                        }
+                        return (ObservableList<T>) inventoryList;
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.exit(1);
+                    }
+                }
+            }
+            case "users" -> {
+                String[] userName;
+                ObservableList<User> userList = FXCollections.observableArrayList();
+                if (searchString.matches("[A-Z a-z]*")) {
+                    userName = searchString.split(" ");
+                    Connection connectDB = new DatabaseConnection().getConnection();
+
+                    try {
+                        DatabaseQuery dbq = new DatabaseQuery();
+                        String connectQuery;
+                        if (exactMatch) {  // if we only want to match the userName exactly
+                            connectQuery = dbq.getExactMatchUser("Username", searchString); // returns usernames that match the search string
+                        } else {
+                            connectQuery = dbq.getUserLikeQuery(userName);  // returns all usernames containing the search string
+                        }
+                        Statement statement = connectDB.createStatement();
+                        ResultSet queryResult = statement.executeQuery(connectQuery);
+
+                        while (queryResult.next()) {
+                            User user = new User(
+                                    queryResult.getString("userName"),
+                                    queryResult.getString("password")
+                            );
+                            userList.add(user);
+                        }
+                        return (ObservableList<T>) userList;
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.exit(1);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * This function will search the input Map object for a key.  If the key exists
+     * we return the associated value.  If not, we return the default value instead
+     */
+    public static <E> E getParams(Map<String, Object> map, String key, E defaultValue) {
+        return (map.containsKey(key)) ? (E) map.get(key) : defaultValue;
+    }
+}
