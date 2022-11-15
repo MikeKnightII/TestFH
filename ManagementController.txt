@@ -1,0 +1,412 @@
+package com.ffh.application;
+
+import com.ffh.application.data.Data;
+import com.ffh.application.data.Person;
+import com.ffh.application.data.PurchaseItem;
+import com.ffh.application.data.User;
+import com.ffh.application.misc.*;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.*;
+import javafx.event.ActionEvent;
+import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
+import javafx.fxml.Initializable;
+import javafx.geometry.Insets;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.control.cell.TextFieldTableCell;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
+import javafx.stage.Stage;
+import javafx.util.converter.DoubleStringConverter;
+import javafx.util.converter.IntegerStringConverter;
+
+import java.io.IOException;
+import java.net.URL;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.ResourceBundle;
+
+public class ManagementController implements Initializable {
+    /** String containing the most recently selected table item */
+    private  String recentItem;
+
+    /** Stores the currently selected object. */
+    private final ObjectProperty<Object> currentlySelectedObjectProperty = new SimpleObjectProperty<>();
+
+    /** Contains the TableView object on the currently selected tab of the TabPane */
+    private final ObjectProperty<TableView<? extends Data>> activeTableViewProperty = new SimpleObjectProperty<>();
+
+    /** True if any tableview in the Management view has a row selected (including tables on non-active tabs) */
+    private final BooleanProperty someTableSelectedProperty = new SimpleBooleanProperty(false);
+
+    /** True if the 'clients' tab is the currently selected tab */
+    private final BooleanProperty isActiveClientsTabProperty = new SimpleBooleanProperty(false);
+
+    /** True if the 'users' tab is the currently selected tab */
+    private final BooleanProperty isActiveUsersTabProperty = new SimpleBooleanProperty(false);
+
+    /** True if 'inventory' is the currently selected tab */
+    private final BooleanProperty isActiveInventoryTabProperty = new SimpleBooleanProperty(false);
+
+    @FXML
+    private TabPane tabPane;
+
+    @FXML
+    private TextField
+            searchField;
+
+    @FXML
+    private StackPane
+            stackPane;  // the Parent of searchField
+
+    @FXML
+    private TableView<Person>
+            clientTable;
+    @FXML
+    private TableColumn<Person, String>
+            col_name_first,
+            col_name_last,
+            col_address;
+
+    @FXML
+    private TableView<User>
+            userTable;
+
+    @FXML
+    private TableColumn<User, String> col_username;
+
+    @FXML
+    private TableView<PurchaseItem>
+            inventoryTable;  // table for inventory items
+
+    @FXML
+    private TableColumn<PurchaseItem, Integer>
+            col_item_no,
+            col_quantity;
+    @FXML
+    private TableColumn<PurchaseItem, String>
+            col_item_name;
+    @FXML
+    private TableColumn<PurchaseItem, Double>
+            col_price;
+    @FXML
+    Button
+            btnAdd,
+            btnBack,
+            btnUpdate,
+            btnDelete;
+
+    @Override
+    public void initialize(URL url, ResourceBundle resourceBundle) {
+        col_name_last.setCellValueFactory(new PropertyValueFactory<>("name_last"));
+        col_name_first.setCellValueFactory(new PropertyValueFactory<>("name_first"));
+        col_address.setCellValueFactory(new PropertyValueFactory<>("address"));
+        col_username.setCellValueFactory(new PropertyValueFactory<>("Username"));
+        col_item_no.setCellValueFactory(new PropertyValueFactory<>("item_no"));
+        col_item_name.setCellValueFactory(new PropertyValueFactory<>("item_name"));
+        col_item_name.setCellFactory(TextFieldTableCell.forTableColumn());
+        col_quantity.setCellValueFactory(new PropertyValueFactory<>("quantity"));
+        col_quantity.setCellFactory(TextFieldTableCell.forTableColumn(new IntegerStringConverter()));
+        col_price.setCellValueFactory(new PropertyValueFactory<>("price"));
+        col_price.setCellFactory(TextFieldTableCell.forTableColumn(new DoubleStringConverter()));
+
+        isActiveUsersTabProperty.bind(tabPane.getSelectionModel().selectedIndexProperty().isEqualTo(0));
+        isActiveClientsTabProperty.bind(tabPane.getSelectionModel().selectedIndexProperty().isEqualTo(1));
+        isActiveInventoryTabProperty.bind(tabPane.getSelectionModel().selectedIndexProperty().isEqualTo(2));
+        someTableSelectedProperty.bind(
+                userTable.getSelectionModel().selectedItemProperty().isNotNull().or(
+                clientTable.getSelectionModel().selectedItemProperty().isNotNull().or(
+                        inventoryTable.getSelectionModel().selectedItemProperty().isNotNull()))
+        );
+
+        /* The listeners added below effectively "bind" (not in the proper javafx sense) a particular arrangement
+            of buttons to a particular tab and clear the selections from a tableview if it's tab is deselected */
+        isActiveUsersTabProperty.addListener((observable, oldValue, newValue) -> {
+            if (!newValue) {
+                userTable.getSelectionModel().clearSelection();
+            } else {
+                btnUpdate.setPrefWidth(110);
+                HBox.setMargin(stackPane, new Insets(10, 0, 0, 140));
+            }
+        });
+
+        isActiveClientsTabProperty.addListener((observable, oldValue, newValue) -> {
+            if (!newValue) {
+                clientTable.getSelectionModel().clearSelection();
+            } else {
+                btnUpdate.setPrefWidth(70);
+                HBox.setMargin(stackPane, new Insets(10, 0, 0, 180));
+            }
+        });
+
+        isActiveInventoryTabProperty.addListener((observable, oldValue, newValue) -> {
+            if (!newValue) {
+                inventoryTable.getSelectionModel().clearSelection();
+            } else {
+                btnUpdate.setPrefWidth(70);
+                HBox.setMargin(stackPane, new Insets(10, 0, 0, 180));
+            }
+        });
+
+        /* This binds activeTableViewProperty to the TableView object on the currently selected tab. */
+        activeTableViewProperty.bind(Bindings.createObjectBinding(() -> {
+            if (isActiveUsersTabProperty.getValue()) return userTable;
+            else if (isActiveClientsTabProperty.getValue()) return clientTable;
+            else return inventoryTable;
+        }, isActiveUsersTabProperty, isActiveClientsTabProperty, isActiveInventoryTabProperty));
+
+        /* Binds the selected item in the active TableView to currentlySelectedObjectProperty.  Null if no selection. */
+        currentlySelectedObjectProperty.bind(Bindings.createObjectBinding(
+                () -> activeTableViewProperty.getValue().getSelectionModel().selectedItemProperty(),
+                activeTableViewProperty));
+
+        /* The lines below initialize the tableviews by sending the empty string as
+        input to the Database.search() method resulting in a 'SELECT * FROM table' query. */
+        populateTable(
+                userTable,
+                Map.of("tableName", "users", "searchString", "")
+        );
+
+        populateTable(
+                clientTable,
+                Map.of("tableName", "person", "searchString", "")
+        );
+
+        populateTable(
+                inventoryTable,
+                Map.of("tableName", "inventory", "searchString", ""));
+
+        /* bind button disableProperty to the someTableSelectedProperty.not() that represents whether a table item is selected */
+        btnUpdate.disableProperty().bind(someTableSelectedProperty.not());
+        btnDelete.disableProperty().bind(someTableSelectedProperty.not());
+
+        btnUpdate.textProperty().bind(Bindings.createStringBinding(() -> {
+            if (isActiveUsersTabProperty.getValue()) {
+                return "Change Password";
+            }
+            else {
+                return "Update";
+            }
+        }, isActiveUsersTabProperty));
+
+        btnUpdate.visibleProperty().bind(isActiveInventoryTabProperty.not());
+    }
+
+    /** This method handles a CellEditEvent in the item_name column of the inventory tableview */
+    @FXML
+    protected void handleItemNameEditCommit(TableColumn.CellEditEvent<PurchaseItem, String> cellEditEvent) {
+        PurchaseItem purchaseItem = cellEditEvent.getRowValue();
+        purchaseItem.setItem_name(cellEditEvent.getNewValue());
+    }
+
+    /**  This method takes care of the situations where the user is clicking on or around the TableView objects */
+    @FXML
+    protected void onTableClick() {
+        /* NOTE: local variable currentItem is of type Object while global variable recentItem is of type String!
+        *   this could potentially cause confusion. */
+        Object currentItem = currentlySelectedObjectProperty.getValue();
+        if (recentItem != null && recentItem.equals(currentItem.toString())) { // the selected item was clicked again
+                activeTableViewProperty.getValue().getSelectionModel().clearSelection();  // un-select the item
+        }
+        recentItem=currentItem.toString();
+
+        col_username.setCellFactory(TextFieldTableCell.forTableColumn());
+        col_username.setOnEditCommit(e->e.getTableView().getItems().get(e.getTablePosition().getRow()).setUsername(e.getNewValue()));
+        userTable.setEditable(true);
+    }
+
+    /**
+     * This method will present a dialog box to the user and ask for PIN authentication when the
+     * user clicks the button indicating that they wish to add a new user or client to the database.
+     * If the PIN is valid, this method will then display the appropriate scene on the primary stage.
+     * REFERENCE -  https://stackoverflow.com/questions/53825323/javafx-textinputdialog-for-password-masking
+     */
+    @FXML
+    protected void onBtnAddClick() {
+        if (!Administrator.isAdministrator()) {  // If user is not admin we'll ask for PIN
+            Optional<PinEntryResult> pinEntryResult = PopupBox.getPinEntryResult().showAndWait();  // show the pin-entry dialog
+            if (pinEntryResult.isPresent()) {  // a filter ensures that pinEntryResult only returned if valid pin entered
+                Administrator.setAdministrator(true);  // If user enters valid PIN, user becomes admin
+            }
+        }
+        if (Administrator.isAdministrator()) {  // Test for admin repeated
+
+            Optional<NewUserResult> optionalResult = PopupBox.getNewUserDialog().showAndWait();  // Call the dialog, return result.
+            optionalResult.ifPresent((NewUserResult results) -> {    // if a NewUserResult was returned, connect to db and update
+                Connection connectDB = new DatabaseConnection().getConnection();
+                String connectQuery = "INSERT INTO users VALUES ('" + results.getName() + "', '" + results.getPassword() + "');";
+                try {
+                    Statement statement = connectDB.createStatement();
+                    statement.executeUpdate(connectQuery);
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+                populateTable(userTable, Map.of("tableName", "users", "searchString", ""));  // refresh the table
+            });
+        }
+    }
+
+    @FXML
+    protected void onBtnChangePassClick() {
+
+    }
+    /** update button is context dependent */
+    @FXML
+    protected void onBtnUpdate(ActionEvent actionEvent) throws IOException {
+        if (isActiveClientsTabProperty.getValue()) {
+//            Parent root = FXMLLoader.load(Objects.requireNonNull(getClass().getResource("Client.fxml")));
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("Client.fxml"));
+
+            /* pass the Person object select in the table to the next scene */
+            ClientController clientController = new ClientController(new Button(), clientTable.getSelectionModel().getSelectedItem());
+
+            loader.setController(clientController);
+            Parent root = loader.load();
+            Stage stage = (Stage) ((Node) actionEvent.getSource()).getScene().getWindow();
+            Scene scene = new Scene(root);
+            stage.setScene(scene);
+            stage.show();
+        }
+
+        else if (isActiveUsersTabProperty.getValue()) {
+            if (!Administrator.isAdministrator()) {
+                Optional<PinEntryResult> pinEntryResult = PopupBox.getPinEntryResult().showAndWait();
+                if (pinEntryResult.isPresent()) {
+                    Administrator.setAdministrator(true);
+                }
+            }
+            if (Administrator.isAdministrator()) {
+                Optional<ChangedPassword> optionalResult = PopupBox.getNewPassDialog().showAndWait();
+                optionalResult.ifPresent((ChangedPassword results) -> {
+                    User user = userTable.getSelectionModel().getSelectedItem();
+                    Connection connectDB = new DatabaseConnection().getConnection();
+                    String username = user.getUsername();
+                    String password = results.getPassword();
+                    String connectQuery = "UPDATE users SET password ='" + password + "'" + "WHERE username ='" + username + "'";
+                    try {
+                        Statement statement = connectDB.createStatement();
+                        statement.executeUpdate(connectQuery);
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+//                userTable.setItems(new Database<User>().search(Map.of("tableName", "users", "searchString", "")));
+                });
+            }
+        }
+    }
+
+
+    /** This is a back button.  It changes the scene on stage to the scene which was previous to this scene. */
+    @FXML
+    protected void onBtnBack(ActionEvent event) throws IOException {
+        Parent root = FXMLLoader.load(Objects.requireNonNull(getClass().getResource("Home.fxml")));
+        Stage stage = (Stage) ((Node) event.getSource()).getScene().getWindow();
+        Scene scene = new Scene(root);
+        stage.setScene(scene);
+        stage.show();
+    }
+
+    /**
+     * This method will be called when the 'Delete' button is clicked or when the user
+     * presses the 'del' key.  A user, client, or inventory item will be (potentially) removed from
+     * the database depending upon the context in which the action takes place.
+     */
+    @FXML
+    protected void onBtnDelete() {
+        if (!Administrator.isAdministrator()) {  // If user is not admin we'll ask for PIN
+            Optional<PinEntryResult> pinEntryResult = PopupBox.getPinEntryResult().showAndWait();  // show the pin-entry dialog
+            if (pinEntryResult.isPresent()) {  // a filter ensures that pinEntryResult only returned if valid pin entered
+                Administrator.setAdministrator(true);  // If user enters valid PIN, user becomes admin
+            }
+        }
+        if (Administrator.isAdministrator()) {  // Test for admin repeated
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Delete Object");
+            alert.setHeaderText("Are you sure?");
+            alert.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.OK) {
+                    int tabPaneIndex = tabPane.getSelectionModel().getSelectedIndex();
+
+                    if (tabPaneIndex == 0) {  // the "Users" tab is active
+                        User user = userTable.getSelectionModel().getSelectedItem();  // get the user object selected on the tableview
+                        Connection connectDB = new DatabaseConnection().getConnection();  // create a new connection to db
+                        String connectQuery = new DatabaseQuery().deleteUserQuery(user);  // get the query to delete a user
+
+                        try {
+                            Statement statement = connectDB.createStatement();
+                            statement.executeUpdate(connectQuery);  // delete the user object
+                        } catch (SQLException e) {
+                            e.printStackTrace();
+                        }
+
+                        populateTable(   // refresh the table view after the object has been deleted
+                                userTable,
+                                Map.of("tableName", "users", "userInput", "")
+                        );
+                    }
+                    else if (tabPaneIndex == 1) {  // the "Clients tab is active
+                        System.out.println("put something here later");
+                    }
+                }
+            });
+        }
+    }
+
+    @FXML
+    protected void handleKeyEvent(KeyEvent keyEvent) {
+        if (keyEvent.getCode() == KeyCode.ESCAPE) {
+            /*  maybe try to find a better way to do this  */
+            inventoryTable.getSelectionModel().clearSelection();
+            clientTable.getSelectionModel().clearSelection();
+            userTable.getSelectionModel().clearSelection();
+        }
+        else if (keyEvent.getCode() == KeyCode.DELETE) {
+            onBtnDelete();
+        }
+    }
+
+    /**
+     * We collect the user's search field entry string.  The entered string is then sent to the
+     * Database search() method which populates the appropriate table with items that contain
+     * the search string in the relevant property field.
+     */
+    @FXML
+    protected void handleSearch(KeyEvent keyEvent) {
+        if (keyEvent.getCode().isLetterKey() || keyEvent.getCode() == KeyCode.BACK_SPACE) {  // only run queries for letter key releases
+            String userInput = searchField.getText().trim(); // Get input from text field and trim it
+
+            /* Maps the names of tableviews to the name of the database table which needs to be searched to populate this tableview */
+            Map<String, Object> tableMapping = Map.of(
+                    userTable.idProperty().getValue(), "users",
+                    clientTable.idProperty().getValue(), "person",
+                    inventoryTable.idProperty().getValue(), "inventory");
+
+            TableView<? extends Data> table = activeTableViewProperty.getValue();  // 'table' is the table we want to populate with query results
+            String tableName = table.idProperty().getValue();  // tableName is the id of table
+
+            /* databaseTableName is name of the database table that we should query to populate 'table' */
+            String databaseTableName = Database.getParams(tableMapping, tableName, "");
+
+            populateTable(table, Map.of("tableName", databaseTableName, "searchString", userInput));
+        }
+    }
+
+    /**
+     * populateTable fills a TableView object.  The user passes the tableView to be filled and a Map object containing
+     * search parameters (explained in Database class)
+     */
+    public static <E extends Data> void populateTable(TableView<E> tableView, Map<String, Object> queryParameters) {
+        Database<E> db = new Database<>();
+        tableView.setItems(db.search(queryParameters));
+    }
+}
